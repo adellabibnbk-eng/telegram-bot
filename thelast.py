@@ -2,10 +2,7 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import requests
-import asyncio
 
-from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
@@ -124,31 +121,12 @@ MACD: {last['MACD']:.2f}
 
     await update.message.reply_text(msg)
 
-# ================= WEB =================
-app_web = Flask(__name__)
-application = ApplicationBuilder().token(TOKEN).build()
+# ================= RUN =================
+app = ApplicationBuilder().token(TOKEN).build()
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-@app_web.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, application.bot)
+print("🚀 BOT RUNNING")
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.process_update(update))
-
-    return "ok"
-
-@app_web.route("/")
-def home():
-    return "OK"
-
-if __name__ == "__main__":
-    url = os.getenv("RENDER_EXTERNAL_URL")
-    requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={url}/{TOKEN}")
-    app_web.run(host="0.0.0.0", port=10000)
+app.run_polling(drop_pending_updates=True)
