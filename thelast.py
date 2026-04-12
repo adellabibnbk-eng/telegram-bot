@@ -5,8 +5,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 
-import os
-TOKEN = os.getenv("8488554463:AAHVIQxb5pfSA3i1JMrxRajYf5lM9Rg1fGo")
+TOKEN = os.getenv("TOKEN")
 
 # =========================
 # 📡 GET PRICE (FIXED)
