@@ -6,7 +6,8 @@ from sklearn.linear_model import LogisticRegression
 import numpy as np
 
 import os
-TOKEN = os.getenv("TOKEN")
+import pandas as pd
+import yfinance as yf
 
 # =========================
 # 📡 GET PRICE (FIXED)
