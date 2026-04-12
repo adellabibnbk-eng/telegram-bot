@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import yfinance as yf
 from telegram import Update
@@ -5,32 +6,26 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 
-import os
-import pandas as pd
-import yfinance as yf
+# مهم: التوكن من Render
+TOKEN = os.getenv("TOKEN")
 
 # =========================
-# 📡 GET PRICE (FIXED)
+# 📡 DATA
 # =========================
 
 def get_data(symbol):
-    symbols_to_try = [
-        symbol + ".CA",
-        symbol,
-    ]
+    try:
+        stock = yf.Ticker(symbol + ".CA")
+        df = stock.history(period="6mo")
 
-    for sym in symbols_to_try:
-        try:
-            stock = yf.Ticker(sym)
-            df = stock.history(period="6mo")
+        if not df.empty:
+            price = float(df["Close"].iloc[-1])
+            return price, df
 
-            if not df.empty:
-                price = float(df["Close"].iloc[-1])
-                return price, df, sym
-        except:
-            continue
+    except:
+        pass
 
-    return None, None, None
+    return None, None
 
 # =========================
 # 📊 INDICATORS
@@ -121,38 +116,21 @@ def analyze(df):
     return signal, trend, score, last
 
 # =========================
-# شرح
-# =========================
-
-def explain(rsi, macd, trend):
-    if rsi > 70:
-        rsi_text = "تشبع شراء"
-    elif rsi < 30:
-        rsi_text = "تشبع بيع"
-    else:
-        rsi_text = "طبيعي"
-
-    macd_text = "زخم صاعد" if macd > 0 else "زخم هابط"
-    trend_text = "اتجاه صاعد" if trend == "صاعد" else "اتجاه هابط"
-
-    return rsi_text, macd_text, trend_text
-
-# =========================
 # BOT
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 ابعت أي سهم (مثال: CIB / MCRO)")
+    await update.message.reply_text("📊 ابعت أي سهم (مثال: CIB)")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper()
 
     await update.message.reply_text("⏳ تحليل...")
 
-    price, df, used_symbol = get_data(symbol)
+    price, df = get_data(symbol)
 
     if df is None:
-        await update.message.reply_text("❌ السهم غير موجود أو غير مدعوم")
+        await update.message.reply_text("❌ السهم غير موجود أو مش مدعوم")
         return
 
     df = calculate(df)
@@ -164,15 +142,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     s1,s2,s3,r1,r2,r3 = pivot_levels(df)
 
-    rsi_text, macd_text, trend_text = explain(last["RSI"], last["MACD"], trend)
-
     msg = f"""
 📊 {symbol}
 
 💰 السعر: {round(price,2)}
 
-📈 RSI: {last['RSI']:.2f} → {rsi_text}
-📊 MACD: {last['MACD']:.2f} → {macd_text}
+📈 RSI: {last['RSI']:.2f}
+📊 MACD: {last['MACD']:.2f}
 
 📉 الاتجاه: {trend}
 📊 التقييم: {score}/100
@@ -196,6 +172,6 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 WORKING VERSION")
+print("🚀 BOT RUNNING")
 
 app.run_polling(drop_pending_updates=True)
