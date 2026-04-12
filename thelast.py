@@ -16,6 +16,12 @@ from sklearn.linear_model import LogisticRegression
 TOKEN = os.getenv("TOKEN")
 
 # =========================
+# LOOP ثابت
+# =========================
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+# =========================
 # DATA
 # =========================
 def get_data(symbol):
@@ -160,7 +166,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # =========================
-# FLASK WEBHOOK
+# FLASK
 # =========================
 app_web = Flask(__name__)
 application = ApplicationBuilder().token(TOKEN).build()
@@ -168,16 +174,16 @@ application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-# 🔥 مهم جدًا (حل المشكلة)
-asyncio.run(application.initialize())
-asyncio.run(application.start())
+# initialize مرة واحدة بس
+loop.run_until_complete(application.initialize())
+loop.run_until_complete(application.start())
 
 @app_web.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
 
-    asyncio.run(application.process_update(update))
+    loop.run_until_complete(application.process_update(update))
 
     return "ok"
 
