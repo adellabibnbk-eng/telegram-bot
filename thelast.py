@@ -2,12 +2,22 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import pytz
 
+from datetime import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+TOP_STOCKS = [
+    "CIB","TALAAT","FWRY","EFG","SWDY",
+    "ETEL","HRHO","ABUK","ORAS","EAST",
+    "JUFO","AMOC","PHDC","SODIC","CCAP",
+    "OLFI","KABO","EGTS","ISPH","DSCW"
+]
 
 # ================= DATA =================
 def get_data(symbol):
@@ -75,19 +85,22 @@ def predict_ai(model, last):
                      columns=["RSI","MACD","EMA50","EMA200"])
     return model.predict_proba(X)[0][1]
 
-# ================= SUPPORT =================
-def pivot_levels(df):
-    last = df.iloc[-1]
-    h, l, c = last["High"], last["Low"], last["Close"]
+# ================= ANALYSIS =================
+def analyze(symbol):
+    price, df = get_data(symbol)
+    if df is None:
+        return None
 
-    pivot = (h + l + c) / 3
+    df = calculate(df)
+    model = train_ai(df)
+    prob = predict_ai(model, df.iloc[-1])
+    score = score_stock(df)
 
-    r1 = (2 * pivot) - l
-    s1 = (2 * pivot) - h
-    r2 = pivot + (h - l)
-    s2 = pivot - (h - l)
-
-    return round(s1,2), round(s2,2), round(r1,2), round(r2,2)
+    return f"""📊 {symbol}
+💰 {round(price,2)}
+🎯 {score}/100
+🤖 {prob:.0%}
+"""
 
 # ================= BOT =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,46 +112,35 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ تحليل...")
 
-    price, df = get_data(symbol)
+    result = analyze(symbol)
 
-    if df is None:
+    if result is None:
         await update.message.reply_text("❌ السهم مش موجود")
         return
 
-    df = calculate(df)
-    model = train_ai(df)
-    prob = predict_ai(model, df.iloc[-1])
+    await update.message.reply_text(result)
 
-    score = score_stock(df)
-    s1,s2,r1,r2 = pivot_levels(df)
-
-    if score > 70:
-        decision = "🔥 شراء قوي"
-    elif score > 50:
-        decision = "📈 شراء"
-    elif score > 30:
-        decision = "⚖️ حيادي"
-    else:
-        decision = "❌ بيع"
-
-    msg = f"""📊 {symbol}
-
-💰 {round(price,2)}
-🎯 {score}/100
-🤖 AI: {prob:.0%}
-
-🔥 القرار: {decision}
-
-🟢 دعم: {s1}/{s2}
-🔴 مقاومة: {r1}/{r2}
-"""
-
-    await update.message.reply_text(msg)
+# ================= DAILY =================
+async def daily_report(context: ContextTypes.DEFAULT_TYPE):
+    for symbol in TOP_STOCKS:
+        msg = analyze(symbol)
+        if msg:
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+# ⏰ توقيت القاهرة
+cairo = pytz.timezone("Africa/Cairo")
+
+# لو JobQueue موجود
+if app.job_queue:
+    app.job_queue.run_daily(
+        daily_report,
+        time=time(hour=9, minute=0, tzinfo=cairo)
+    )
 
 print("🚀 BOT RUNNING")
 
