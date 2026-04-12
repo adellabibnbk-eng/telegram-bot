@@ -1,0 +1,7 @@
+python-telegram-bot==22.7
+pandas
+yfinance
+scikit-learn
+requests
+beautifulsoup4
+lxml
