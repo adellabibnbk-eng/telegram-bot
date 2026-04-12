@@ -5,6 +5,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 
+import os
 TOKEN = os.getenv("TOKEN")
 
 # =========================
