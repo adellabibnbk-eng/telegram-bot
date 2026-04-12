@@ -2,22 +2,12 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import pytz
 
-from datetime import time
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-TOP_STOCKS = [
-    "CIB","TALAAT","FWRY","EFG","SWDY",
-    "ETEL","HRHO","ABUK","ORAS","EAST",
-    "JUFO","AMOC","PHDC","SODIC","CCAP",
-    "OLFI","KABO","EGTS","ISPH","DSCW"
-]
 
 # ================= DATA =================
 def get_data(symbol):
@@ -100,9 +90,6 @@ def pivot_levels(df):
     return round(s1,2), round(s2,2), round(r1,2), round(r2,2)
 
 # ================= BOT =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 ابعت سهم زي CIB")
-
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper().strip()
 
@@ -138,12 +125,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💰 {round(price,2)}
 🎯 {score}/100
-🤖 {prob:.0%}
+🤖 AI: {prob:.0%}
 
-🔥 {decision}
+🔥 القرار: {decision}
 
-🟢 {s1}/{s2}
-🔴 {r1}/{r2}
+🟢 دعم: {s1}/{s2}
+🔴 مقاومة: {r1}/{r2}
 """
 
     await update.message.reply_text(msg)
@@ -151,7 +138,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 print("🚀 BOT RUNNING")
