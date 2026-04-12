@@ -2,22 +2,12 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import pytz
 
-from datetime import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-TOP_STOCKS = [
-    "CIB","TALAAT","FWRY","EFG","SWDY",
-    "ETEL","HRHO","ABUK","ORAS","EAST",
-    "JUFO","AMOC","PHDC","SODIC","CCAP",
-    "OLFI","KABO","EGTS","ISPH","DSCW"
-]
 
 # ================= DATA =================
 def get_data(symbol):
@@ -48,27 +38,6 @@ def calculate(df):
 
     return df.dropna()
 
-# ================= SCORE =================
-def score_stock(df):
-    last = df.iloc[-1]
-    score = 0
-
-    if last["EMA50"] > last["EMA200"]:
-        score += 30
-
-    if 30 < last["RSI"] < 70:
-        score += 20
-    elif last["RSI"] < 30:
-        score += 15
-
-    if last["MACD"] > last["Signal"]:
-        score += 25
-
-    if df["Close"].iloc[-1] > df["Close"].iloc[-5]:
-        score += 10
-
-    return score
-
 # ================= AI =================
 def train_ai(df):
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
@@ -85,21 +54,71 @@ def predict_ai(model, last):
                      columns=["RSI","MACD","EMA50","EMA200"])
     return model.predict_proba(X)[0][1]
 
-# ================= ANALYSIS =================
-def analyze(symbol):
-    price, df = get_data(symbol)
-    if df is None:
-        return None
+# ================= ANALYSIS TEXT =================
+def build_analysis(symbol, price, df, prob):
+    last = df.iloc[-1]
 
-    df = calculate(df)
-    model = train_ai(df)
-    prob = predict_ai(model, df.iloc[-1])
-    score = score_stock(df)
+    # RSI
+    rsi = last["RSI"]
+    if rsi > 70:
+        rsi_text = "🔴 متشبع شراء (احتمال هبوط)"
+    elif rsi < 30:
+        rsi_text = "🟢 متشبع بيع (فرصة صعود)"
+    else:
+        rsi_text = "⚖️ طبيعي"
 
-    return f"""📊 {symbol}
-💰 {round(price,2)}
-🎯 {score}/100
-🤖 {prob:.0%}
+    # MACD
+    if last["MACD"] > last["Signal"]:
+        macd_text = "📈 زخم صاعد"
+    else:
+        macd_text = "📉 زخم هابط"
+
+    # Trend
+    if last["EMA50"] > last["EMA200"]:
+        trend = "📈 اتجاه صاعد"
+        trend_score = 1
+    else:
+        trend = "📉 اتجاه هابط"
+        trend_score = -1
+
+    # AI
+    if prob > 0.6:
+        ai_text = "🟢 فرصة صعود قوية"
+    elif prob > 0.5:
+        ai_text = "⚖️ فرصة متوسطة"
+    else:
+        ai_text = "🔴 احتمال هبوط"
+
+    # FINAL DECISION
+    if trend_score == 1 and prob > 0.6:
+        decision = "🔥 شراء قوي"
+    elif prob > 0.5:
+        decision = "📈 شراء بحذر"
+    elif prob < 0.4:
+        decision = "❌ بيع"
+    else:
+        decision = "⚖️ حيادي"
+
+    return f"""📊 تحليل سهم {symbol}
+
+💰 السعر: {round(price,2)}
+
+📉 RSI: {round(rsi,2)}
+{rsi_text}
+
+📊 MACD: {round(last["MACD"],2)}
+{macd_text}
+
+📈 الاتجاه:
+{trend}
+
+🤖 الذكاء الاصطناعي:
+احتمال الصعود: {prob:.0%}
+{ai_text}
+
+━━━━━━━━━━━━━━━
+🎯 التقييم النهائي:
+{decision}
 """
 
 # ================= BOT =================
@@ -110,37 +129,29 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ابعت رمز سهم بالإنجليزي")
         return
 
-    await update.message.reply_text("⏳ تحليل...")
+    await update.message.reply_text("⏳ جاري التحليل...")
 
-    result = analyze(symbol)
+    price, df = get_data(symbol)
 
-    if result is None:
+    if df is None:
         await update.message.reply_text("❌ السهم مش موجود")
         return
 
-    await update.message.reply_text(result)
+    df = calculate(df)
+    model = train_ai(df)
+    prob = predict_ai(model, df.iloc[-1])
 
-# ================= DAILY =================
-async def daily_report(context: ContextTypes.DEFAULT_TYPE):
-    for symbol in TOP_STOCKS:
-        msg = analyze(symbol)
-        if msg:
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+    msg = build_analysis(symbol, price, df, prob)
+
+    # 🔥 إضافة التسويق
+    msg += "\n\n💰 للاشتراك في التوصيات اليومية ابعت (اشتراك)"
+
+    await update.message.reply_text(msg)
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-# ⏰ توقيت القاهرة
-cairo = pytz.timezone("Africa/Cairo")
-
-# لو JobQueue موجود
-if app.job_queue:
-    app.job_queue.run_daily(
-        daily_report,
-        time=time(hour=9, minute=0, tzinfo=cairo)
-    )
 
 print("🚀 BOT RUNNING")
 
