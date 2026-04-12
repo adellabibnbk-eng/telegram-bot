@@ -12,10 +12,6 @@ from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
 
-# 🔥 loop ثابت
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
 def get_data(symbol):
     try:
         stock = yf.Ticker(symbol + ".CA")
@@ -63,7 +59,6 @@ def train_ai(df):
     X = df[["RSI","MACD","EMA50","EMA200"]].dropna()
     y = df["Target"].loc[X.index]
 
-    from sklearn.linear_model import LogisticRegression
     model = LogisticRegression()
     model.fit(X,y)
     return model
@@ -136,15 +131,15 @@ application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-# 🔥 initialize مرة واحدة
-loop.run_until_complete(application.initialize())
-loop.run_until_complete(application.start())
-
 @app_web.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
 
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(application.initialize())
     loop.run_until_complete(application.process_update(update))
 
     return "ok"
