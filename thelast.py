@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
+# ================= TOKEN =================
 TOKEN = os.getenv("TOKEN")
 
 # ================= DATA =================
@@ -90,7 +91,7 @@ def analyze(df):
 
 # ================= BOT =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 ابعت سهم زي CIB")
+    await update.message.reply_text("📊 ابعت اسم سهم زي CIB")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper()
