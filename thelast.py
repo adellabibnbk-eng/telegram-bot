@@ -9,6 +9,7 @@ from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
 
+# ================= DATA =================
 def get_data(symbol):
     try:
         stock = yf.Ticker(symbol + ".CA")
@@ -19,6 +20,7 @@ def get_data(symbol):
         pass
     return None, None
 
+# ================= INDICATORS =================
 def calculate(df):
     df["EMA50"] = df["Close"].ewm(span=50).mean()
     df["EMA200"] = df["Close"].ewm(span=200).mean()
@@ -36,6 +38,7 @@ def calculate(df):
 
     return df.dropna()
 
+# ================= SUPPORT / RESISTANCE =================
 def pivot_levels(df):
     last = df.iloc[-1]
     h, l, c = last["High"], last["Low"], last["Close"]
@@ -51,6 +54,7 @@ def pivot_levels(df):
 
     return round(s1,2), round(s2,2), round(s3,2), round(r1,2), round(r2,2), round(r3,2)
 
+# ================= AI =================
 def train_ai(df):
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
     X = df[["RSI","MACD","EMA50","EMA200"]].dropna()
@@ -64,6 +68,7 @@ def predict_ai(model, last):
     X = np.array([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]])
     return model.predict_proba(X)[0][1]
 
+# ================= ANALYSIS =================
 def analyze(df):
     last = df.iloc[-1]
 
@@ -90,6 +95,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper()
 
+    await update.message.reply_text("⏳ تحليل...")
+
     price, df = get_data(symbol)
 
     if df is None:
@@ -104,19 +111,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s1,s2,s3,r1,r2,r3 = pivot_levels(df)
 
     msg = f"""📊 {symbol}
-💰 {round(price,2)}
 
-RSI: {last['RSI']:.2f}
-MACD: {last['MACD']:.2f}
+💰 السعر: {round(price,2)}
 
-📉 {trend}
-📊 Score: {score}
+📈 RSI: {last['RSI']:.2f}
+📊 MACD: {last['MACD']:.2f}
 
-🤖 {prob:.2%}
-🔥 {signal}
+📉 الاتجاه: {trend}
+📊 التقييم: {score}/100
 
-🟢 {s1}/{s2}/{s3}
-🔴 {r1}/{r2}/{r3}
+🤖 احتمال الصعود: {prob:.2%}
+
+🔥 القرار: {signal}
+
+🟢 الدعوم: {s1} / {s2} / {s3}
+🔴 المقاومات: {r1} / {r2} / {r3}
 """
 
     await update.message.reply_text(msg)
