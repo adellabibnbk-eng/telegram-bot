@@ -10,8 +10,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-# ================= TOP 20 STOCKS =================
+# ================= TOP STOCKS =================
 TOP_STOCKS = [
     "CIB","TALAAT","FWRY","EFG","SWDY",
     "ETEL","HRHO","ABUK","ORAS","EAST",
@@ -81,7 +82,8 @@ def train_ai(df):
     return model
 
 def predict_ai(model, last):
-    X = np.array([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]])
+    X = pd.DataFrame([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]],
+                     columns=["RSI","MACD","EMA50","EMA200"])
     return model.predict_proba(X)[0][1]
 
 # ================= SUPPORT =================
@@ -101,9 +103,7 @@ def pivot_levels(df):
 # ================= ANALYSIS =================
 def analyze(df):
     last = df.iloc[-1]
-
     trend = "📈 صاعد" if last["EMA50"] > last["EMA200"] else "📉 هابط"
-
     return trend, last
 
 # ================= BOT =================
@@ -111,7 +111,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔥 ابعت سهم زي CIB")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text.upper()
+    symbol = update.message.text.upper().strip()
+
+    # فلترة الرموز الغلط
+    if not symbol.isalpha():
+        await update.message.reply_text("❌ ابعت رمز سهم بالإنجليزي")
+        return
 
     await update.message.reply_text("⏳ تحليل...")
 
@@ -147,7 +152,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📉 MACD: {last['MACD']:.2f}
 
 🎯 Score: {score}/100
-🤖 AI: {prob:.2%}
+🤖 AI: {prob:.0%}
 
 🔥 القرار: {decision}
 
@@ -159,8 +164,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DAILY REPORT =================
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = os.getenv("CHAT_ID")
-
     for symbol in TOP_STOCKS:
         price, df = get_data(symbol)
         if df is None:
@@ -169,9 +172,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         df = calculate(df)
         model = train_ai(df)
         prob = predict_ai(model, df.iloc[-1])
-
         score = score_stock(df)
-        trend, last = analyze(df)
 
         msg = f"""📊 {symbol}
 💰 {round(price,2)}
@@ -179,7 +180,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 🤖 {prob:.0%}
 """
 
-        await context.bot.send_message(chat_id=chat_id, text=msg)
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
