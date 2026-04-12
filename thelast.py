@@ -2,13 +2,22 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import pytz
 
+from datetime import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
-# ================= TOKEN =================
 TOKEN = os.getenv("TOKEN")
+
+# ================= TOP 20 STOCKS =================
+TOP_STOCKS = [
+    "CIB","TALAAT","FWRY","EFG","SWDY",
+    "ETEL","HRHO","ABUK","ORAS","EAST",
+    "JUFO","AMOC","PHDC","SODIC","CCAP",
+    "OLFI","KABO","EGTS","ISPH","DSCW"
+]
 
 # ================= DATA =================
 def get_data(symbol):
@@ -39,25 +48,31 @@ def calculate(df):
 
     return df.dropna()
 
-# ================= SUPPORT / RESISTANCE =================
-def pivot_levels(df):
+# ================= SCORE =================
+def score_stock(df):
     last = df.iloc[-1]
-    h, l, c = last["High"], last["Low"], last["Close"]
+    score = 0
 
-    pivot = (h + l + c) / 3
+    if last["EMA50"] > last["EMA200"]:
+        score += 30
 
-    r1 = (2 * pivot) - l
-    s1 = (2 * pivot) - h
-    r2 = pivot + (h - l)
-    s2 = pivot - (h - l)
-    r3 = h + 2 * (pivot - l)
-    s3 = l - 2 * (h - pivot)
+    if 30 < last["RSI"] < 70:
+        score += 20
+    elif last["RSI"] < 30:
+        score += 15
 
-    return round(s1,2), round(s2,2), round(s3,2), round(r1,2), round(r2,2), round(r3,2)
+    if last["MACD"] > last["Signal"]:
+        score += 25
+
+    if df["Close"].iloc[-1] > df["Close"].iloc[-5]:
+        score += 10
+
+    return score
 
 # ================= AI =================
 def train_ai(df):
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
+
     X = df[["RSI","MACD","EMA50","EMA200"]].dropna()
     y = df["Target"].loc[X.index]
 
@@ -69,29 +84,31 @@ def predict_ai(model, last):
     X = np.array([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]])
     return model.predict_proba(X)[0][1]
 
+# ================= SUPPORT =================
+def pivot_levels(df):
+    last = df.iloc[-1]
+    h, l, c = last["High"], last["Low"], last["Close"]
+
+    pivot = (h + l + c) / 3
+
+    r1 = (2 * pivot) - l
+    s1 = (2 * pivot) - h
+    r2 = pivot + (h - l)
+    s2 = pivot - (h - l)
+
+    return round(s1,2), round(s2,2), round(r1,2), round(r2,2)
+
 # ================= ANALYSIS =================
 def analyze(df):
     last = df.iloc[-1]
 
-    trend = "صاعد" if last["EMA50"] > last["EMA200"] else "هابط"
+    trend = "📈 صاعد" if last["EMA50"] > last["EMA200"] else "📉 هابط"
 
-    score = 0
-    if trend == "صاعد": score += 30
-    if last["MACD"] > last["Signal"]: score += 30
-    if 40 < last["RSI"] < 60: score += 20
-
-    if score >= 60:
-        signal = "شراء 🔥"
-    elif score <= 30:
-        signal = "بيع ❌"
-    else:
-        signal = "انتظار ⏸"
-
-    return signal, trend, score, last
+    return trend, last
 
 # ================= BOT =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 ابعت اسم سهم زي CIB")
+    await update.message.reply_text("🔥 ابعت سهم زي CIB")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper()
@@ -101,41 +118,82 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price, df = get_data(symbol)
 
     if df is None:
-        await update.message.reply_text("❌ مش لاقي السهم")
+        await update.message.reply_text("❌ السهم مش موجود")
         return
 
     df = calculate(df)
     model = train_ai(df)
     prob = predict_ai(model, df.iloc[-1])
 
-    signal, trend, score, last = analyze(df)
-    s1,s2,s3,r1,r2,r3 = pivot_levels(df)
+    score = score_stock(df)
+    trend, last = analyze(df)
+    s1,s2,r1,r2 = pivot_levels(df)
+
+    if score > 70:
+        decision = "🔥 شراء قوي"
+    elif score > 50:
+        decision = "📈 شراء"
+    elif score > 30:
+        decision = "⚖️ حيادي"
+    else:
+        decision = "❌ بيع"
 
     msg = f"""📊 {symbol}
 
-💰 السعر: {round(price,2)}
+💰 {round(price,2)}
 
-📈 RSI: {last['RSI']:.2f}
-📊 MACD: {last['MACD']:.2f}
+📉 {trend}
+📊 RSI: {last['RSI']:.0f}
+📉 MACD: {last['MACD']:.2f}
 
-📉 الاتجاه: {trend}
-📊 التقييم: {score}/100
+🎯 Score: {score}/100
+🤖 AI: {prob:.2%}
 
-🤖 احتمال الصعود: {prob:.2%}
+🔥 القرار: {decision}
 
-🔥 القرار: {signal}
-
-🟢 الدعوم: {s1} / {s2} / {s3}
-🔴 المقاومات: {r1} / {r2} / {r3}
+🟢 دعم: {s1}/{s2}
+🔴 مقاومة: {r1}/{r2}
 """
 
     await update.message.reply_text(msg)
+
+# ================= DAILY REPORT =================
+async def daily_report(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = os.getenv("CHAT_ID")
+
+    for symbol in TOP_STOCKS:
+        price, df = get_data(symbol)
+        if df is None:
+            continue
+
+        df = calculate(df)
+        model = train_ai(df)
+        prob = predict_ai(model, df.iloc[-1])
+
+        score = score_stock(df)
+        trend, last = analyze(df)
+
+        msg = f"""📊 {symbol}
+💰 {round(price,2)}
+🎯 {score}/100
+🤖 {prob:.0%}
+"""
+
+        await context.bot.send_message(chat_id=chat_id, text=msg)
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+# ⏰ توقيت القاهرة
+cairo = pytz.timezone("Africa/Cairo")
+
+app.job_queue.run_daily(
+    daily_report,
+    time=time(hour=9, minute=0, tzinfo=cairo)
+)
 
 print("🚀 BOT RUNNING")
 
