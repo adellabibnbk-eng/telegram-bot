@@ -148,37 +148,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# ================= DAILY =================
-async def daily_report(context: ContextTypes.DEFAULT_TYPE):
-    for symbol in TOP_STOCKS:
-        price, df = get_data(symbol)
-        if df is None:
-            continue
-
-        df = calculate(df)
-        model = train_ai(df)
-        prob = predict_ai(model, df.iloc[-1])
-        score = score_stock(df)
-
-        msg = f"{symbol} | {score}/100 | {prob:.0%}"
-
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
-
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-# 🧠 حل مشكلة JobQueue
-if app.job_queue:
-    cairo = pytz.timezone("Africa/Cairo")
-    app.job_queue.run_daily(
-        daily_report,
-        time=time(hour=9, minute=0, tzinfo=cairo)
-    )
-else:
-    print("⚠️ JobQueue not available")
 
 print("🚀 BOT RUNNING")
 
