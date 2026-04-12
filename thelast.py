@@ -12,7 +12,6 @@ from sklearn.linear_model import LogisticRegression
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# ================= TOP STOCKS =================
 TOP_STOCKS = [
     "CIB","TALAAT","FWRY","EFG","SWDY",
     "ETEL","HRHO","ABUK","ORAS","EAST",
@@ -100,12 +99,6 @@ def pivot_levels(df):
 
     return round(s1,2), round(s2,2), round(r1,2), round(r2,2)
 
-# ================= ANALYSIS =================
-def analyze(df):
-    last = df.iloc[-1]
-    trend = "📈 صاعد" if last["EMA50"] > last["EMA200"] else "📉 هابط"
-    return trend, last
-
 # ================= BOT =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔥 ابعت سهم زي CIB")
@@ -113,7 +106,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper().strip()
 
-    # فلترة الرموز الغلط
     if not symbol.isalpha():
         await update.message.reply_text("❌ ابعت رمز سهم بالإنجليزي")
         return
@@ -131,7 +123,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prob = predict_ai(model, df.iloc[-1])
 
     score = score_stock(df)
-    trend, last = analyze(df)
     s1,s2,r1,r2 = pivot_levels(df)
 
     if score > 70:
@@ -146,23 +137,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"""📊 {symbol}
 
 💰 {round(price,2)}
+🎯 {score}/100
+🤖 {prob:.0%}
 
-📉 {trend}
-📊 RSI: {last['RSI']:.0f}
-📉 MACD: {last['MACD']:.2f}
+🔥 {decision}
 
-🎯 Score: {score}/100
-🤖 AI: {prob:.0%}
-
-🔥 القرار: {decision}
-
-🟢 دعم: {s1}/{s2}
-🔴 مقاومة: {r1}/{r2}
+🟢 {s1}/{s2}
+🔴 {r1}/{r2}
 """
 
     await update.message.reply_text(msg)
 
-# ================= DAILY REPORT =================
+# ================= DAILY =================
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     for symbol in TOP_STOCKS:
         price, df = get_data(symbol)
@@ -174,11 +160,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         prob = predict_ai(model, df.iloc[-1])
         score = score_stock(df)
 
-        msg = f"""📊 {symbol}
-💰 {round(price,2)}
-🎯 {score}/100
-🤖 {prob:.0%}
-"""
+        msg = f"{symbol} | {score}/100 | {prob:.0%}"
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 
@@ -188,13 +170,15 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-# ⏰ توقيت القاهرة
-cairo = pytz.timezone("Africa/Cairo")
-
-app.job_queue.run_daily(
-    daily_report,
-    time=time(hour=9, minute=0, tzinfo=cairo)
-)
+# 🧠 حل مشكلة JobQueue
+if app.job_queue:
+    cairo = pytz.timezone("Africa/Cairo")
+    app.job_queue.run_daily(
+        daily_report,
+        time=time(hour=9, minute=0, tzinfo=cairo)
+    )
+else:
+    print("⚠️ JobQueue not available")
 
 print("🚀 BOT RUNNING")
 
