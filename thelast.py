@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import requests
+import asyncio
 
 from flask import Flask, request
 from telegram import Update
@@ -169,10 +170,12 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 @app_web.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+
+    asyncio.run(application.process_update(update))
+
     return "ok"
 
 @app_web.route("/")
@@ -185,7 +188,6 @@ def home():
 if __name__ == "__main__":
     url = os.getenv("RENDER_EXTERNAL_URL")
 
-    # set webhook
     requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={url}/{TOKEN}")
 
     app_web.run(host="0.0.0.0", port=10000)
