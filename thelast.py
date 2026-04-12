@@ -28,7 +28,6 @@ def get_data(symbol):
             return price, df
     except:
         pass
-
     return None, None
 
 # =========================
@@ -188,6 +187,7 @@ def home():
 if __name__ == "__main__":
     url = os.getenv("RENDER_EXTERNAL_URL")
 
+    # set webhook
     requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={url}/{TOKEN}")
 
     app_web.run(host="0.0.0.0", port=10000)
