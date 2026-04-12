@@ -10,35 +10,22 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
 
-# =========================
-# TOKEN
-# =========================
 TOKEN = os.getenv("TOKEN")
 
-# =========================
-# LOOP ثابت
-# =========================
+# 🔥 loop ثابت
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-# =========================
-# DATA
-# =========================
 def get_data(symbol):
     try:
         stock = yf.Ticker(symbol + ".CA")
         df = stock.history(period="6mo")
-
         if not df.empty:
-            price = float(df["Close"].iloc[-1])
-            return price, df
+            return float(df["Close"].iloc[-1]), df
     except:
         pass
     return None, None
 
-# =========================
-# INDICATORS
-# =========================
 def calculate(df):
     df["EMA50"] = df["Close"].ewm(span=50).mean()
     df["EMA200"] = df["Close"].ewm(span=200).mean()
@@ -56,50 +43,35 @@ def calculate(df):
 
     return df.dropna()
 
-# =========================
-# SUPPORT / RESISTANCE
-# =========================
 def pivot_levels(df):
     last = df.iloc[-1]
+    h, l, c = last["High"], last["Low"], last["Close"]
 
-    high = last["High"]
-    low = last["Low"]
-    close = last["Close"]
+    pivot = (h + l + c) / 3
 
-    pivot = (high + low + close) / 3
-
-    r1 = (2 * pivot) - low
-    s1 = (2 * pivot) - high
-
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
-
-    r3 = high + 2 * (pivot - low)
-    s3 = low - 2 * (high - pivot)
+    r1 = (2 * pivot) - l
+    s1 = (2 * pivot) - h
+    r2 = pivot + (h - l)
+    s2 = pivot - (h - l)
+    r3 = h + 2 * (pivot - l)
+    s3 = l - 2 * (h - pivot)
 
     return round(s1,2), round(s2,2), round(s3,2), round(r1,2), round(r2,2), round(r3,2)
 
-# =========================
-# AI
-# =========================
 def train_ai(df):
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
+    X = df[["RSI","MACD","EMA50","EMA200"]].dropna()
+    y = df["Target"].loc[X.index]
 
-    features = df[["RSI", "MACD", "EMA50", "EMA200"]].dropna()
-    target = df["Target"].loc[features.index]
-
+    from sklearn.linear_model import LogisticRegression
     model = LogisticRegression()
-    model.fit(features, target)
-
+    model.fit(X,y)
     return model
 
 def predict_ai(model, last):
     X = np.array([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]])
     return model.predict_proba(X)[0][1]
 
-# =========================
-# ANALYSIS
-# =========================
 def analyze(df):
     last = df.iloc[-1]
 
@@ -119,62 +91,52 @@ def analyze(df):
 
     return signal, trend, score, last
 
-# =========================
-# BOT HANDLERS
-# =========================
+# ================= BOT =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 ابعت أي سهم (مثال: CIB)")
+    await update.message.reply_text("📊 ابعت سهم زي CIB")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.upper()
 
-    await update.message.reply_text("⏳ تحليل...")
-
     price, df = get_data(symbol)
 
     if df is None:
-        await update.message.reply_text("❌ السهم غير موجود")
+        await update.message.reply_text("❌ مش لاقي السهم")
         return
 
     df = calculate(df)
-
     model = train_ai(df)
     prob = predict_ai(model, df.iloc[-1])
 
     signal, trend, score, last = analyze(df)
     s1,s2,s3,r1,r2,r3 = pivot_levels(df)
 
-    msg = f"""
-📊 {symbol}
+    msg = f"""📊 {symbol}
+💰 {round(price,2)}
 
-💰 السعر: {round(price,2)}
+RSI: {last['RSI']:.2f}
+MACD: {last['MACD']:.2f}
 
-📈 RSI: {last['RSI']:.2f}
-📊 MACD: {last['MACD']:.2f}
+📉 {trend}
+📊 Score: {score}
 
-📉 الاتجاه: {trend}
-📊 التقييم: {score}/100
+🤖 {prob:.2%}
+🔥 {signal}
 
-🤖 احتمال الصعود: {prob:.2%}
-
-🔥 القرار: {signal}
-
-🟢 الدعوم: {s1} / {s2} / {s3}
-🔴 المقاومات: {r1} / {r2} / {r3}
+🟢 {s1}/{s2}/{s3}
+🔴 {r1}/{r2}/{r3}
 """
 
     await update.message.reply_text(msg)
 
-# =========================
-# FLASK
-# =========================
+# ================= WEB =================
 app_web = Flask(__name__)
 application = ApplicationBuilder().token(TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-# initialize مرة واحدة بس
+# 🔥 initialize مرة واحدة
 loop.run_until_complete(application.initialize())
 loop.run_until_complete(application.start())
 
@@ -189,14 +151,9 @@ def webhook():
 
 @app_web.route("/")
 def home():
-    return "Bot is running 🔥"
+    return "OK"
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
     url = os.getenv("RENDER_EXTERNAL_URL")
-
     requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={url}/{TOKEN}")
-
     app_web.run(host="0.0.0.0", port=10000)
