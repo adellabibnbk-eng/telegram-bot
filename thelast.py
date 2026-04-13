@@ -18,14 +18,26 @@ except:
 
 TOKEN = os.getenv("TOKEN")
 
+# ===== SYMBOL FIX =====
+def fix_symbol(symbol):
+    symbol = symbol.upper().strip()
+
+    if "." not in symbol:
+        symbol = symbol + ".CA"   # للأسهم المصرية
+
+    return symbol
+
 # ===== DATA =====
 def get_data(symbol):
     try:
+        symbol = fix_symbol(symbol)
         df = yf.Ticker(symbol).history(period="6mo")
+
         if df is not None and not df.empty:
             return float(df["Close"].iloc[-1]), df
     except:
         pass
+
     return None, None
 
 # ===== FEATURES =====
@@ -108,6 +120,7 @@ def predict(model, row):
     X = pd.DataFrame([[
         row["RSI"], row["Momentum"], row["MA20"], row["MA50"], row["Vol_Ratio"]
     ]], columns=["RSI","Momentum","MA20","MA50","Vol_Ratio"])
+
     return model.predict_proba(X)[0][1]
 
 # ===== ANALYZE =====
@@ -115,7 +128,7 @@ def analyze(symbol):
     price, df = get_data(symbol)
 
     if df is None:
-        return "❌ السهم غير متاح"
+        return "❌ السهم غير متاح (تأكد من الاسم)"
 
     df = prepare(df)
     if df.empty:
@@ -123,7 +136,7 @@ def analyze(symbol):
 
     model, acc = load_model(df)
     if model is None:
-        return "❌ الموديل مش جاهز"
+        return "❌ الموديل لسه بيتعلم"
 
     last = df.iloc[-1]
 
@@ -134,72 +147,65 @@ def analyze(symbol):
     trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
 
     if last["RSI"] > 70:
-        rsi_text = "تشبع شراء (احتمال تصحيح)"
+        rsi_text = "تشبع شراء (خطر تصحيح)"
     elif last["RSI"] < 30:
         rsi_text = "تشبع بيع (فرصة ارتداد)"
     else:
-        rsi_text = "منطقة طبيعية"
+        rsi_text = "منطقة متوازنة"
 
     volume_text = "سيولة قوية" if last["Vol_Ratio"] > 1 else "سيولة ضعيفة"
 
     # ===== AI =====
     if prob > 0.65:
-        ai_text = "توقع صعود قوي"
+        ai_text = "صعود قوي متوقع"
     elif prob > 0.5:
-        ai_text = "توقع محايد"
+        ai_text = "محايد"
     else:
-        ai_text = "توقع هبوط"
+        ai_text = "هبوط متوقع"
 
-    # ===== الخلاصة =====
+    # ===== FINAL =====
     if prob > 0.65 and trend == "صاعد 🔼":
-        final = "السهم في وضع إيجابي (اتجاه + AI داعم)"
+        final = "إيجابي قوي"
     elif prob < 0.5 and trend == "هابط 🔽":
-        final = "السهم ضعيف (اتجاه + AI سلبي)"
+        final = "سلبي"
     else:
-        final = "وضع مختلط يحتاج تأكيد"
+        final = "مختلط"
 
     return f"""📊 {symbol}
 
-💰 السعر الحالي: {round(price,2)}
+💰 السعر: {round(price,2)}
 
 ━━━━━━━━━━━━━━━
 📊 التحليل الفني:
 
 📈 الاتجاه: {trend}
-➡️ (حسب متوسطات الحركة)
-
-📉 RSI: {round(last["RSI"],1)}
-➡️ {rsi_text}
-
-📊 السيولة:
-➡️ {volume_text}
+📉 RSI: {round(last["RSI"],1)} → {rsi_text}
+📊 السيولة: {volume_text}
 
 ━━━━━━━━━━━━━━━
 🤖 تحليل الذكاء الاصطناعي:
 
 🎯 AI Score: {score}/100
 📈 احتمال الصعود: {prob:.0%}
+🧠 التوقع: {ai_text}
 
-🧠 التقييم:
-➡️ {ai_text}
-
-📊 دقة النموذج تاريخيًا:
-➡️ {acc if acc else "مستقر"} %
+📊 دقة النموذج:
+{acc if acc else "جاري التحديث"} %
 
 ━━━━━━━━━━━━━━━
-✍️ التقييم النهائي:
+✍️ الخلاصة:
 
 {final}
 
 ━━━━━━━━━━━━━━━
 ⚠️ إخلاء مسؤولية:
-هذا التحليل مبني على بيانات تاريخية ونماذج إحصائية
-ولا يُعد توصية استثمارية مباشرة.
+هذا التحليل مبني على نماذج إحصائية
+وليس توصية استثمارية مباشرة.
 """
 
 # ===== HANDLER =====
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text.strip().upper()
+    symbol = update.message.text.strip()
 
     await update.message.reply_text("⏳ جاري التحليل...")
 
@@ -207,24 +213,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(result)
 
-# ===== MAIN =====
+# ===== MAIN (NO CONFLICT) =====
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT RUNNING PRO VERSION")
+    print("🚀 BOT RUNNING CLEAN")
 
-    await app.bot.delete_webhook(drop_pending_updates=True)
-
-    await app.initialize()
-    await app.start()
-
-    await app.bot.get_updates(offset=-1)
-
-    await app.updater.start_polling()
-
-    await asyncio.Event().wait()
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
