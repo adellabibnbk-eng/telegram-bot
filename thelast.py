@@ -8,7 +8,7 @@ import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# ===== AI (XGBoost fallback) =====
+# ===== AI =====
 try:
     from xgboost import XGBClassifier
     USE_XGB = True
@@ -21,7 +21,7 @@ TOKEN = os.getenv("TOKEN")
 # ===== DATA =====
 def get_data(symbol):
     try:
-        df = yf.Ticker(symbol + ".CA").history(period="6mo")
+        df = yf.Ticker(symbol).history(period="6mo")
         if df is not None and not df.empty:
             return float(df["Close"].iloc[-1]), df
     except:
@@ -42,8 +42,6 @@ def prepare(df):
     df["Momentum"] = df["Close"] - df["Close"].shift(5)
     df["Vol_Avg"] = df["Volume"].rolling(10).mean()
     df["Vol_Ratio"] = df["Volume"] / df["Vol_Avg"]
-    df["Range"] = df["High"] - df["Low"]
-    df["Breakout"] = (df["Close"] > df["High"].shift(5)).astype(int)
 
     return df.dropna()
 
@@ -51,14 +49,14 @@ def prepare(df):
 def train(df):
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
 
-    X = df[["RSI","Momentum","MA20","MA50","Vol_Ratio","Range","Breakout"]].dropna()
+    X = df[["RSI","Momentum","MA20","MA50","Vol_Ratio"]].dropna()
     y = df["Target"].loc[X.index]
 
     if len(X) < 50:
         return None, None, None
 
     if USE_XGB:
-        model = XGBClassifier(n_estimators=100, max_depth=4)
+        model = XGBClassifier(n_estimators=100)
     else:
         model = LogisticRegression(max_iter=1000)
 
@@ -108,12 +106,8 @@ def load_model(df):
 # ===== PREDICT =====
 def predict(model, row):
     X = pd.DataFrame([[
-        row["RSI"], row["Momentum"], row["MA20"], row["MA50"],
-        row["Vol_Ratio"], row["Range"], row["Breakout"]
-    ]], columns=[
-        "RSI","Momentum","MA20","MA50",
-        "Vol_Ratio","Range","Breakout"
-    ])
+        row["RSI"], row["Momentum"], row["MA20"], row["MA50"], row["Vol_Ratio"]
+    ]], columns=["RSI","Momentum","MA20","MA50","Vol_Ratio"])
     return model.predict_proba(X)[0][1]
 
 # ===== ANALYZE =====
@@ -132,51 +126,75 @@ def analyze(symbol):
         return "❌ الموديل مش جاهز"
 
     last = df.iloc[-1]
-    prob = predict(model, last)
 
+    prob = predict(model, last)
     score = int(prob * 100)
 
-    # الاتجاه
+    # ===== تحليل فني =====
     trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
 
-    # RSI
     if last["RSI"] > 70:
-        rsi_status = "تشبع شراء ⚠️"
+        rsi_text = "تشبع شراء (احتمال تصحيح)"
     elif last["RSI"] < 30:
-        rsi_status = "تشبع بيع 🔥"
+        rsi_text = "تشبع بيع (فرصة ارتداد)"
     else:
-        rsi_status = "منطقة متوازنة"
+        rsi_text = "منطقة طبيعية"
 
-    # خلاصة
+    volume_text = "سيولة قوية" if last["Vol_Ratio"] > 1 else "سيولة ضعيفة"
+
+    # ===== AI =====
     if prob > 0.65:
-        summary = "السهم في اتجاه إيجابي قوي مع فرص صعود واضحة."
+        ai_text = "توقع صعود قوي"
     elif prob > 0.5:
-        summary = "السهم في وضع حيادي ويحتاج تأكيد."
+        ai_text = "توقع محايد"
     else:
-        summary = "السهم ضعيف وقد يتعرض لضغط بيعي."
+        ai_text = "توقع هبوط"
+
+    # ===== الخلاصة =====
+    if prob > 0.65 and trend == "صاعد 🔼":
+        final = "السهم في وضع إيجابي (اتجاه + AI داعم)"
+    elif prob < 0.5 and trend == "هابط 🔽":
+        final = "السهم ضعيف (اتجاه + AI سلبي)"
+    else:
+        final = "وضع مختلط يحتاج تأكيد"
 
     return f"""📊 {symbol}
 
-💰 السعر: {round(price,2)}
+💰 السعر الحالي: {round(price,2)}
+
+━━━━━━━━━━━━━━━
+📊 التحليل الفني:
 
 📈 الاتجاه: {trend}
-📊 RSI: {round(last["RSI"],1)} ({rsi_status})
+➡️ (حسب متوسطات الحركة)
 
-🤖 AI Score: {score}/100
+📉 RSI: {round(last["RSI"],1)}
+➡️ {rsi_text}
+
+📊 السيولة:
+➡️ {volume_text}
+
+━━━━━━━━━━━━━━━
+🤖 تحليل الذكاء الاصطناعي:
+
+🎯 AI Score: {score}/100
 📈 احتمال الصعود: {prob:.0%}
 
-━━━━━━━━━━━━━━━
-✍️ الخلاصة:
-{summary}
+🧠 التقييم:
+➡️ {ai_text}
+
+📊 دقة النموذج تاريخيًا:
+➡️ {acc if acc else "مستقر"} %
 
 ━━━━━━━━━━━━━━━
-📊 دقة النموذج:
-{acc if acc else "محدث مسبقًا"} %
+✍️ التقييم النهائي:
+
+{final}
 
 ━━━━━━━━━━━━━━━
 ⚠️ إخلاء مسؤولية:
-هذا التحليل مبني على نماذج إحصائية وتحليل فني
-ولا يُعد نصيحة استثمارية مباشرة.
+هذا التحليل مبني على بيانات تاريخية ونماذج إحصائية
+ولا يُعد توصية استثمارية مباشرة.
 """
 
 # ===== HANDLER =====
@@ -195,15 +213,13 @@ async def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT RUNNING FINAL VERSION")
+    print("🚀 BOT RUNNING PRO VERSION")
 
-    # 🔥 يمسح أي webhook قديم
     await app.bot.delete_webhook(drop_pending_updates=True)
 
     await app.initialize()
     await app.start()
 
-    # 🔥 يمنع أي Conflict قديم
     await app.bot.get_updates(offset=-1)
 
     await app.updater.start_polling()
