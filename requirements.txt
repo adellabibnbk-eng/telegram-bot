@@ -1,6 +1,6 @@
 python-telegram-bot==22.7
-pandas
 yfinance
+pandas
 numpy
 scikit-learn
-xgboost==2.0.3
+xgboost
