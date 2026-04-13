@@ -2,25 +2,24 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
-
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# ===== AI =====
-try:
-    from xgboost import XGBClassifier
-    USE_XGB = True
-except:
-    from sklearn.linear_model import LogisticRegression
-    USE_XGB = False
-
+# ===== CONFIG =====
 TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-# ===== SYMBOL FIX =====
+TOP_STOCKS = [
+    "CIB","TALAAT","FWRY","EFG","SWDY",
+    "ETEL","HRHO","ABUK","ORAS","EAST"
+]
+
+# ===== SYMBOL =====
 def fix_symbol(symbol):
     symbol = symbol.upper().strip()
     if "." not in symbol:
-        symbol = symbol + ".CA"
+        symbol += ".CA"
     return symbol
 
 # ===== DATA =====
@@ -28,25 +27,22 @@ def get_data(symbol):
     try:
         symbol = fix_symbol(symbol)
         df = yf.Ticker(symbol).history(period="6mo")
-
-        if df is not None and not df.empty:
+        if not df.empty:
             return float(df["Close"].iloc[-1]), df
     except:
         pass
     return None, None
 
-# ===== SUPPORT & RESISTANCE =====
-def support_resistance(df):
-    supports = df["Low"].rolling(20).min().tail(3).values
-    resistances = df["High"].rolling(20).max().tail(3).values
-
-    supports = [round(x,2) for x in supports if not np.isnan(x)]
-    resistances = [round(x,2) for x in resistances if not np.isnan(x)]
-
-    return supports[::-1], resistances[::-1]
+# ===== SUPPORT / RESIST =====
+def sr(df):
+    s = df["Low"].rolling(20).min().tail(3).values
+    r = df["High"].rolling(20).max().tail(3).values
+    s = [round(x,2) for x in s if not np.isnan(x)][::-1]
+    r = [round(x,2) for x in r if not np.isnan(x)][::-1]
+    return s, r
 
 # ===== FEATURES =====
-def prepare(df):
+def prep(df):
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA50"] = df["Close"].rolling(50).mean()
 
@@ -57,131 +53,100 @@ def prepare(df):
     df["RSI"] = 100 - (100 / (1 + rs))
 
     df["Momentum"] = df["Close"] - df["Close"].shift(5)
-    df["Vol_Avg"] = df["Volume"].rolling(10).mean()
-    df["Vol_Ratio"] = df["Volume"] / df["Vol_Avg"]
 
     return df.dropna()
 
-# ===== TRAIN =====
+# ===== AI =====
 def train(df):
+    from sklearn.linear_model import LogisticRegression
+
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
 
-    X = df[["RSI","Momentum","MA20","MA50","Vol_Ratio"]].dropna()
+    X = df[["RSI","Momentum","MA20","MA50"]].dropna()
     y = df["Target"].loc[X.index]
 
     if len(X) < 50:
-        return None, None, None
+        return None
 
-    if USE_XGB:
-        model = XGBClassifier(n_estimators=100)
-    else:
-        model = LogisticRegression(max_iter=1000)
-
+    model = LogisticRegression()
     model.fit(X, y)
-    return model, X, y
 
-# ===== BACKTEST =====
-def backtest(model, X, y):
-    preds = model.predict(X)
-    return round((preds == y).mean() * 100, 2)
-
-# ===== MODEL =====
-MODEL_FILE = "model.pkl"
-LAST_TRAIN = "last_train.txt"
-
-def load_model(df):
-    import datetime, pickle
-
-    today = str(datetime.date.today())
-
-    if os.path.exists(LAST_TRAIN):
-        last = open(LAST_TRAIN).read()
-    else:
-        last = ""
-
-    if last != today:
-        model, X, y = train(df)
-        if model is None:
-            return None, None
-
-        acc = backtest(model, X, y)
-
-        with open(MODEL_FILE, "wb") as f:
-            pickle.dump(model, f)
-
-        with open(LAST_TRAIN, "w") as f:
-            f.write(today)
-
-        return model, acc
-    else:
-        try:
-            with open(MODEL_FILE, "rb") as f:
-                return pickle.load(f), None
-        except:
-            return None, None
-
-# ===== PREDICT =====
-def predict(model, row):
-    X = pd.DataFrame([[
-        row["RSI"], row["Momentum"], row["MA20"], row["MA50"], row["Vol_Ratio"]
-    ]], columns=["RSI","Momentum","MA20","MA50","Vol_Ratio"])
-
-    return model.predict_proba(X)[0][1]
+    return model
 
 # ===== ANALYZE =====
 def analyze(symbol):
     price, df = get_data(symbol)
 
     if df is None:
-        return "❌ السهم غير متاح"
+        return None
 
-    df = prepare(df)
+    df = prep(df)
     if df.empty:
-        return "❌ بيانات غير كافية"
+        return None
 
-    supports, resistances = support_resistance(df)
-
-    model, acc = load_model(df)
+    model = train(df)
     if model is None:
-        return "❌ الموديل لسه بيتعلم"
+        return None
 
     last = df.iloc[-1]
 
-    prob = predict(model, last)
+    prob = model.predict_proba([[last["RSI"], last["Momentum"], last["MA20"], last["MA50"]]])[0][1]
     score = int(prob * 100)
+
+    supports, resistances = sr(df)
 
     trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
 
-    rsi = round(last["RSI"],1)
+    entry = supports[0] if supports else price
+    stop = round(entry * 0.97, 2)
+    target = resistances[0] if resistances else price
 
-    return f"""📊 {symbol}
+    rr = round((target - entry) / (entry - stop), 2) if (entry - stop) else 0
 
-💰 السعر: {round(price,2)}
+    if prob > 0.6 and rr > 1.5:
+        decision = "🟢 فرصة قوية"
+    elif prob > 0.5:
+        decision = "🟡 فرصة متوسطة"
+    else:
+        decision = "🔴 ضعيف"
 
-━━━━━━━━━━━━━━━
-📊 التحليل الفني:
+    return {
+        "symbol": symbol,
+        "price": price,
+        "score": score,
+        "prob": prob,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "rr": rr,
+        "decision": decision,
+        "trend": trend
+    }
 
-📈 الاتجاه: {trend}
-📉 RSI: {rsi}
+# ===== DAILY REPORT =====
+def daily(bot):
+    results = []
 
-🟢 الدعوم:
-{supports}
+    for s in TOP_STOCKS:
+        r = analyze(s)
+        if r:
+            results.append(r)
 
-🔴 المقاومات:
-{resistances}
+    results = sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
-━━━━━━━━━━━━━━━
-🤖 AI:
+    msg = "📊 TOP فرص اليوم:\n\n"
 
-🎯 Score: {score}/100
-📈 احتمال الصعود: {prob:.0%}
+    for i, r in enumerate(results,1):
+        msg += f"""{i}) {r['symbol']}
+Score: {r['score']}/100
+Entry: {r['entry']}
+Target: {r['target']}
+RR: {r['rr']}
+{r['decision']}
 
-📊 دقة النموذج:
-{acc if acc else "محدث"} %
-
-━━━━━━━━━━━━━━━
-⚠️ هذا التحليل ليس توصية استثمارية
 """
+
+    bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===== HANDLER =====
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -189,17 +154,51 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ جاري التحليل...")
 
-    result = analyze(symbol)
+    r = analyze(symbol)
 
-    await update.message.reply_text(result)
+    if not r:
+        await update.message.reply_text("❌ السهم غير متاح")
+        return
+
+    msg = f"""📊 {r['symbol']}
+
+💰 السعر: {round(r['price'],2)}
+
+📈 الاتجاه: {r['trend']}
+
+🤖 AI Score: {r['score']}/100
+📈 احتمال الصعود: {r['prob']:.0%}
+
+━━━━━━━━━━━━━━━
+💼 الصفقة:
+
+🎯 دخول: {r['entry']}
+🛑 وقف: {r['stop']}
+🎯 هدف: {r['target']}
+
+📊 RR: {r['rr']}
+
+━━━━━━━━━━━━━━━
+🔥 التقييم:
+
+{r['decision']}
+
+⚠️ ليس توصية استثمارية
+"""
+
+    await update.message.reply_text(msg)
 
 # ===== MAIN =====
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    print("🚀 BOT RUNNING WITH SUPPORT/RESISTANCE")
+    scheduler = BackgroundScheduler(timezone="Africa/Cairo")
+    scheduler.add_job(lambda: daily(app.bot), 'cron', hour=9)
+    scheduler.start()
+
+    print("🚀 PRO BOT RUNNING")
 
     app.run_polling()
 
