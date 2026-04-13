@@ -3,14 +3,12 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import datetime
-import json
-import pickle
 import asyncio
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# ====== AI (XGBoost fallback) ======
+# ===== AI (XGBoost fallback) =====
 try:
     from xgboost import XGBClassifier
     USE_XGB = True
@@ -19,17 +17,6 @@ except:
     USE_XGB = False
 
 TOKEN = os.getenv("TOKEN")
-
-TOP_STOCKS = [
-    "CIB","TALAAT","FWRY","EFG","SWDY",
-    "ETEL","HRHO","ABUK","ORAS","EAST",
-    "JUFO","AMOC","PHDC","SODIC","CCAP",
-    "OLFI","KABO","EGTS","ISPH","DSCW"
-]
-
-MODEL_FILE = "model.pkl"
-LAST_TRAIN_FILE = "last_train.txt"
-SIGNALS_FILE = "signals.json"
 
 # ===== DATA =====
 def get_data(symbol):
@@ -83,12 +70,15 @@ def backtest(model, X, y):
     preds = model.predict(X)
     return round((preds == y).mean() * 100, 2)
 
-# ===== LOAD MODEL =====
+# ===== MODEL =====
+MODEL_FILE = "model.pkl"
+LAST_TRAIN = "last_train.txt"
+
 def load_model(df):
     today = str(datetime.date.today())
 
-    if os.path.exists(LAST_TRAIN_FILE):
-        last = open(LAST_TRAIN_FILE).read()
+    if os.path.exists(LAST_TRAIN):
+        last = open(LAST_TRAIN).read()
     else:
         last = ""
 
@@ -99,15 +89,17 @@ def load_model(df):
 
         acc = backtest(model, X, y)
 
+        import pickle
         with open(MODEL_FILE, "wb") as f:
             pickle.dump(model, f)
 
-        with open(LAST_TRAIN_FILE, "w") as f:
+        with open(LAST_TRAIN, "w") as f:
             f.write(today)
 
         return model, acc
     else:
         try:
+            import pickle
             with open(MODEL_FILE, "rb") as f:
                 return pickle.load(f), None
         except:
@@ -127,6 +119,7 @@ def predict(model, row):
 # ===== ANALYZE =====
 def analyze(symbol):
     price, df = get_data(symbol)
+
     if df is None:
         return "❌ السهم غير متاح"
 
@@ -143,31 +136,56 @@ def analyze(symbol):
 
     score = int(prob * 100)
 
-    if prob > 0.65:
-        summary = "اتجاه صاعد قوي"
-    elif prob > 0.5:
-        summary = "اتجاه حيادي"
+    # الاتجاه
+    trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
+
+    # RSI
+    if last["RSI"] > 70:
+        rsi_status = "تشبع شراء ⚠️"
+    elif last["RSI"] < 30:
+        rsi_status = "تشبع بيع 🔥"
     else:
-        summary = "اتجاه ضعيف"
+        rsi_status = "منطقة متوازنة"
+
+    # خلاصة
+    if prob > 0.65:
+        summary = "السهم في اتجاه إيجابي قوي مع فرص صعود واضحة."
+    elif prob > 0.5:
+        summary = "السهم في وضع حيادي ويحتاج تأكيد."
+    else:
+        summary = "السهم ضعيف وقد يتعرض لضغط بيعي."
 
     return f"""📊 {symbol}
+
 💰 السعر: {round(price,2)}
+
+📈 الاتجاه: {trend}
+📊 RSI: {round(last["RSI"],1)} ({rsi_status})
 
 🤖 AI Score: {score}/100
 📈 احتمال الصعود: {prob:.0%}
 
-✍️ {summary}
+━━━━━━━━━━━━━━━
+✍️ الخلاصة:
+{summary}
 
-⚠️ تحليل فني فقط وليس نصيحة استثمارية
+━━━━━━━━━━━━━━━
+📊 دقة النموذج:
+{acc if acc else "محدث مسبقًا"} %
+
+━━━━━━━━━━━━━━━
+⚠️ إخلاء مسؤولية:
+هذا التحليل مبني على نماذج إحصائية وتحليل فني
+ولا يُعد نصيحة استثمارية مباشرة.
 """
 
 # ===== HANDLER =====
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().upper()
+    symbol = update.message.text.strip().upper()
 
     await update.message.reply_text("⏳ جاري التحليل...")
 
-    result = analyze(text)
+    result = analyze(symbol)
 
     await update.message.reply_text(result)
 
@@ -177,12 +195,20 @@ async def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT RUNNING WORKER MODE")
+    print("🚀 BOT RUNNING FINAL VERSION")
+
+    # 🔥 يمسح أي webhook قديم
+    await app.bot.delete_webhook(drop_pending_updates=True)
 
     await app.initialize()
     await app.start()
+
+    # 🔥 يمنع أي Conflict قديم
+    await app.bot.get_updates(offset=-1)
+
     await app.updater.start_polling()
-    await asyncio.Event().wait()  # يخليه شغال للأبد
+
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
