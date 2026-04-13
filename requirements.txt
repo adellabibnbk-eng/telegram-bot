@@ -1,5 +1,6 @@
-python-telegram-bot[job-queue]==22.7
+python-telegram-bot==22.7
 pandas
 yfinance
+numpy
+xgboost
 scikit-learn
-pytz
