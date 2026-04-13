@@ -2,8 +2,6 @@ import os
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import datetime
-import asyncio
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -21,10 +19,8 @@ TOKEN = os.getenv("TOKEN")
 # ===== SYMBOL FIX =====
 def fix_symbol(symbol):
     symbol = symbol.upper().strip()
-
     if "." not in symbol:
-        symbol = symbol + ".CA"   # للأسهم المصرية
-
+        symbol = symbol + ".CA"
     return symbol
 
 # ===== DATA =====
@@ -37,8 +33,17 @@ def get_data(symbol):
             return float(df["Close"].iloc[-1]), df
     except:
         pass
-
     return None, None
+
+# ===== SUPPORT & RESISTANCE =====
+def support_resistance(df):
+    supports = df["Low"].rolling(20).min().tail(3).values
+    resistances = df["High"].rolling(20).max().tail(3).values
+
+    supports = [round(x,2) for x in supports if not np.isnan(x)]
+    resistances = [round(x,2) for x in resistances if not np.isnan(x)]
+
+    return supports[::-1], resistances[::-1]
 
 # ===== FEATURES =====
 def prepare(df):
@@ -85,6 +90,8 @@ MODEL_FILE = "model.pkl"
 LAST_TRAIN = "last_train.txt"
 
 def load_model(df):
+    import datetime, pickle
+
     today = str(datetime.date.today())
 
     if os.path.exists(LAST_TRAIN):
@@ -99,7 +106,6 @@ def load_model(df):
 
         acc = backtest(model, X, y)
 
-        import pickle
         with open(MODEL_FILE, "wb") as f:
             pickle.dump(model, f)
 
@@ -109,7 +115,6 @@ def load_model(df):
         return model, acc
     else:
         try:
-            import pickle
             with open(MODEL_FILE, "rb") as f:
                 return pickle.load(f), None
         except:
@@ -128,11 +133,13 @@ def analyze(symbol):
     price, df = get_data(symbol)
 
     if df is None:
-        return "❌ السهم غير متاح (تأكد من الاسم)"
+        return "❌ السهم غير متاح"
 
     df = prepare(df)
     if df.empty:
         return "❌ بيانات غير كافية"
+
+    supports, resistances = support_resistance(df)
 
     model, acc = load_model(df)
     if model is None:
@@ -143,33 +150,9 @@ def analyze(symbol):
     prob = predict(model, last)
     score = int(prob * 100)
 
-    # ===== تحليل فني =====
     trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
 
-    if last["RSI"] > 70:
-        rsi_text = "تشبع شراء (خطر تصحيح)"
-    elif last["RSI"] < 30:
-        rsi_text = "تشبع بيع (فرصة ارتداد)"
-    else:
-        rsi_text = "منطقة متوازنة"
-
-    volume_text = "سيولة قوية" if last["Vol_Ratio"] > 1 else "سيولة ضعيفة"
-
-    # ===== AI =====
-    if prob > 0.65:
-        ai_text = "صعود قوي متوقع"
-    elif prob > 0.5:
-        ai_text = "محايد"
-    else:
-        ai_text = "هبوط متوقع"
-
-    # ===== FINAL =====
-    if prob > 0.65 and trend == "صاعد 🔼":
-        final = "إيجابي قوي"
-    elif prob < 0.5 and trend == "هابط 🔽":
-        final = "سلبي"
-    else:
-        final = "مختلط"
+    rsi = round(last["RSI"],1)
 
     return f"""📊 {symbol}
 
@@ -179,28 +162,25 @@ def analyze(symbol):
 📊 التحليل الفني:
 
 📈 الاتجاه: {trend}
-📉 RSI: {round(last["RSI"],1)} → {rsi_text}
-📊 السيولة: {volume_text}
+📉 RSI: {rsi}
+
+🟢 الدعوم:
+{supports}
+
+🔴 المقاومات:
+{resistances}
 
 ━━━━━━━━━━━━━━━
-🤖 تحليل الذكاء الاصطناعي:
+🤖 AI:
 
-🎯 AI Score: {score}/100
+🎯 Score: {score}/100
 📈 احتمال الصعود: {prob:.0%}
-🧠 التوقع: {ai_text}
 
 📊 دقة النموذج:
-{acc if acc else "جاري التحديث"} %
+{acc if acc else "محدث"} %
 
 ━━━━━━━━━━━━━━━
-✍️ الخلاصة:
-
-{final}
-
-━━━━━━━━━━━━━━━
-⚠️ إخلاء مسؤولية:
-هذا التحليل مبني على نماذج إحصائية
-وليس توصية استثمارية مباشرة.
+⚠️ هذا التحليل ليس توصية استثمارية
 """
 
 # ===== HANDLER =====
@@ -213,13 +193,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(result)
 
-# ===== MAIN (NO CONFLICT) =====
+# ===== MAIN =====
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT RUNNING FINAL (NO LOOP ERROR)")
+    print("🚀 BOT RUNNING WITH SUPPORT/RESISTANCE")
 
     app.run_polling()
 
