@@ -8,7 +8,14 @@ import pickle
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from xgboost import XGBClassifier
+
+# 🔥 fallback لو xgboost مش متسطب
+try:
+    from xgboost import XGBClassifier
+    USE_XGB = True
+except:
+    from sklearn.linear_model import LogisticRegression
+    USE_XGB = False
 
 TOKEN = os.getenv("TOKEN")
 
@@ -60,9 +67,12 @@ def train_model(df):
     X = df[["RSI","Momentum","MA20","MA50","Vol_Ratio","Range","Breakout"]].dropna()
     y = df["Target"].loc[X.index]
 
-    model = XGBClassifier(n_estimators=150, max_depth=5, learning_rate=0.08)
-    model.fit(X, y)
+    if USE_XGB:
+        model = XGBClassifier(n_estimators=120, max_depth=4, learning_rate=0.1)
+    else:
+        model = LogisticRegression(max_iter=1000)
 
+    model.fit(X, y)
     return model, X, y
 
 # ================= BACKTEST =================
@@ -92,10 +102,13 @@ def load_or_train(df):
 
         return model, acc
     else:
-        with open(MODEL_FILE, "rb") as f:
-            model = pickle.load(f)
-
-        return model, None
+        try:
+            with open(MODEL_FILE, "rb") as f:
+                model = pickle.load(f)
+            return model, None
+        except:
+            model, X, y = train_model(df)
+            return model, None
 
 # ================= PREDICT =================
 def predict(model, row):
@@ -165,23 +178,26 @@ def evaluate_signals():
         return "لا توجد نتائج كافية"
 
     rate = (success / total) * 100
-
     return f"📊 نسبة النجاح: {round(rate,2)}%"
 
 # ================= ANALYSIS =================
 def analyze(symbol):
     price, df = get_data(symbol)
+
     if df is None:
         return None
 
     df = prepare_features(df)
+
+    if df is None or df.empty:
+        return None
+
     last = df.iloc[-1]
 
     model, acc = load_or_train(df)
     prob = predict(model, last)
 
     score = int(prob * 100)
-
     summary = summary_line(prob)
 
     save_signal(symbol, round(price,2), prob)
@@ -261,6 +277,6 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 BOT RUNNING - FULL AI SYSTEM")
+print("🚀 BOT RUNNING - SAFE MODE")
 
 app.run_polling(drop_pending_updates=True)
