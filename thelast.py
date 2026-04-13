@@ -5,7 +5,6 @@ import numpy as np
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from sklearn.linear_model import LogisticRegression
 
 TOKEN = os.getenv("TOKEN")
 
@@ -22,8 +21,9 @@ def get_data(symbol):
 
 # ================= INDICATORS =================
 def calculate(df):
-    df["EMA50"] = df["Close"].ewm(span=50).mean()
-    df["EMA200"] = df["Close"].ewm(span=200).mean()
+    df["MA20"] = df["Close"].rolling(20).mean()
+    df["MA50"] = df["Close"].rolling(50).mean()
+    df["MA200"] = df["Close"].rolling(200).mean()
 
     delta = df["Close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
@@ -31,94 +31,112 @@ def calculate(df):
     rs = gain / loss
     df["RSI"] = 100 - (100 / (1 + rs))
 
-    df["EMA12"] = df["Close"].ewm(span=12).mean()
-    df["EMA26"] = df["Close"].ewm(span=26).mean()
-    df["MACD"] = df["EMA12"] - df["EMA26"]
-    df["Signal"] = df["MACD"].ewm(span=9).mean()
-
     return df.dropna()
 
-# ================= AI =================
-def train_ai(df):
-    df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
+# ================= SUPPORT / RESIST =================
+def get_levels(df):
+    recent = df.tail(20)
+    support = round(recent["Low"].min(), 2)
+    resistance = round(recent["High"].max(), 2)
+    return support, resistance
 
-    X = df[["RSI","MACD","EMA50","EMA200"]].dropna()
-    y = df["Target"].loc[X.index]
-
-    model = LogisticRegression()
-    model.fit(X,y)
-    return model
-
-def predict_ai(model, last):
-    X = pd.DataFrame([[last["RSI"], last["MACD"], last["EMA50"], last["EMA200"]]],
-                     columns=["RSI","MACD","EMA50","EMA200"])
-    return model.predict_proba(X)[0][1]
-
-# ================= ANALYSIS TEXT =================
-def build_analysis(symbol, price, df, prob):
+# ================= TREND =================
+def get_trend(df):
     last = df.iloc[-1]
 
+    if last["MA50"] > last["MA200"]:
+        return "📈 اتجاه صاعد"
+    elif last["MA50"] < last["MA200"]:
+        return "📉 اتجاه هابط"
+    else:
+        return "⚖️ اتجاه عرضي"
+
+# ================= ANALYSIS =================
+def analyze(symbol):
+    price, df = get_data(symbol)
+
+    if df is None:
+        return None
+
+    df = calculate(df)
+    last = df.iloc[-1]
+
+    support, resistance = get_levels(df)
+    trend = get_trend(df)
+
     # RSI
-    rsi = last["RSI"]
+    rsi = round(last["RSI"], 2)
     if rsi > 70:
-        rsi_text = "🔴 متشبع شراء (احتمال هبوط)"
+        rsi_text = "تشبع شراء (احتمال تصحيح)"
     elif rsi < 30:
-        rsi_text = "🟢 متشبع بيع (فرصة صعود)"
+        rsi_text = "تشبع بيع (احتمال ارتداد)"
     else:
-        rsi_text = "⚖️ طبيعي"
+        rsi_text = "منطقة طبيعية"
 
-    # MACD
-    if last["MACD"] > last["Signal"]:
-        macd_text = "📈 زخم صاعد"
+    # Volume
+    vol_now = df["Volume"].iloc[-1]
+    vol_avg = df["Volume"].rolling(10).mean().iloc[-1]
+
+    if vol_now > vol_avg:
+        vol_text = "حجم تداول مرتفع (تأكيد للحركة)"
     else:
-        macd_text = "📉 زخم هابط"
+        vol_text = "حجم ضعيف (حذر)"
 
-    # Trend
-    if last["EMA50"] > last["EMA200"]:
-        trend = "📈 اتجاه صاعد"
-        trend_score = 1
+    # Decision logic (بدون افتراضات)
+    if price <= support * 1.02 and rsi < 40:
+        decision = "📈 فرصة شراء من الدعم"
+    elif price >= resistance * 0.98 and rsi > 60:
+        decision = "📉 منطقة بيع / جني أرباح"
     else:
-        trend = "📉 اتجاه هابط"
-        trend_score = -1
+        decision = "⚖️ انتظار ومراقبة"
 
-    # AI
-    if prob > 0.6:
-        ai_text = "🟢 فرصة صعود قوية"
-    elif prob > 0.5:
-        ai_text = "⚖️ فرصة متوسطة"
-    else:
-        ai_text = "🔴 احتمال هبوط"
+    # Stop / Target
+    stop_loss = round(support * 0.97, 2)
+    target = resistance
 
-    # FINAL DECISION
-    if trend_score == 1 and prob > 0.6:
-        decision = "🔥 شراء قوي"
-    elif prob > 0.5:
-        decision = "📈 شراء بحذر"
-    elif prob < 0.4:
-        decision = "❌ بيع"
-    else:
-        decision = "⚖️ حيادي"
+    return f"""📊 تحليل فني لسهم {symbol}
 
-    return f"""📊 تحليل سهم {symbol}
+💰 السعر الحالي: {round(price,2)}
 
-💰 السعر: {round(price,2)}
-
-📉 RSI: {round(rsi,2)}
-{rsi_text}
-
-📊 MACD: {round(last["MACD"],2)}
-{macd_text}
-
+━━━━━━━━━━━━━━━
 📈 الاتجاه:
 {trend}
 
-🤖 الذكاء الاصطناعي:
-احتمال الصعود: {prob:.0%}
-{ai_text}
+━━━━━━━━━━━━━━━
+📊 الدعم والمقاومة:
+🟢 الدعم: {support}
+🔴 المقاومة: {resistance}
 
 ━━━━━━━━━━━━━━━
-🎯 التقييم النهائي:
+📉 مؤشر RSI: {rsi}
+📌 {rsi_text}
+
+━━━━━━━━━━━━━━━
+📊 حجم التداول:
+📌 {vol_text}
+
+━━━━━━━━━━━━━━━
+🎯 خطة التداول:
+
+📍 نقطة الدخول:
+قرب {support} أو بعد اختراق {resistance}
+
+🛑 وقف الخسارة:
+{stop_loss}
+
+🎯 الهدف:
+{target}
+
+━━━━━━━━━━━━━━━
+🔥 التوصية:
 {decision}
+
+━━━━━━━━━━━━━━━
+⚠️ إخلاء مسؤولية:
+هذا التحليل مبني على أدوات التحليل الفني فقط
+ولا يُعد توصية استثمارية مباشرة.
+القرار النهائي مسؤولية المستخدم بالكامل،
+وقد تتحمل الأسواق مخاطر غير متوقعة.
 """
 
 # ================= BOT =================
@@ -131,22 +149,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ جاري التحليل...")
 
-    price, df = get_data(symbol)
+    result = analyze(symbol)
 
-    if df is None:
-        await update.message.reply_text("❌ السهم مش موجود")
+    if result is None:
+        await update.message.reply_text("❌ السهم غير متاح")
         return
 
-    df = calculate(df)
-    model = train_ai(df)
-    prob = predict_ai(model, df.iloc[-1])
-
-    msg = build_analysis(symbol, price, df, prob)
-
-    # 🔥 إضافة التسويق
-    msg += "\n\n💰 للاشتراك في التوصيات اليومية ابعت (اشتراك)"
-
-    await update.message.reply_text(msg)
+    await update.message.reply_text(result)
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
