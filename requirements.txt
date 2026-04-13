@@ -2,5 +2,5 @@ python-telegram-bot==22.7
 pandas
 yfinance
 numpy
-xgboost
 scikit-learn
+xgboost==2.0.3
