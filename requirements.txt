@@ -3,6 +3,5 @@ yfinance
 pandas
 numpy
 scikit-learn
-xgboost
 apscheduler
 tzlocal
