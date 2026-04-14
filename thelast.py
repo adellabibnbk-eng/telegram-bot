@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import asyncio
+import requests
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -18,16 +19,44 @@ def fix_symbol(symbol):
         symbol += ".CA"
     return symbol
 
-# ===== DATA (15 min) =====
+# ===== DATA MULTI SOURCE =====
 def get_data(symbol):
-    try:
-        symbol = fix_symbol(symbol)
-        df = yf.Ticker(symbol).history(period="5d", interval="15m")
+    symbol_fixed = fix_symbol(symbol)
 
+    # 1️⃣ Yahoo 15m
+    try:
+        df = yf.Ticker(symbol_fixed).history(period="5d", interval="15m")
         if df is not None and not df.empty:
             return float(df["Close"].iloc[-1]), df
     except:
         pass
+
+    # 2️⃣ Yahoo Daily
+    try:
+        df = yf.Ticker(symbol_fixed).history(period="6mo", interval="1d")
+        if df is not None and not df.empty:
+            return float(df["Close"].iloc[-1]), df
+    except:
+        pass
+
+    # 3️⃣ Stooq fallback
+    try:
+        url = f"https://stooq.com/q/d/l/?s={symbol.lower()}.eg&i=d"
+        df = pd.read_csv(url)
+
+        if df is not None and not df.empty:
+            df.rename(columns={
+                "Open":"Open",
+                "High":"High",
+                "Low":"Low",
+                "Close":"Close",
+                "Volume":"Volume"
+            }, inplace=True)
+
+            return float(df["Close"].iloc[-1]), df
+    except:
+        pass
+
     return None, None
 
 # ===== SUPPORT / RESISTANCE =====
@@ -99,14 +128,12 @@ def analyze(symbol):
 
     trend = "صاعد 🔼" if last["MA20"] > last["MA50"] else "هابط 🔽"
 
-    # ===== ENTRY SYSTEM =====
     entry = supports[0]
     stop = round(entry * 0.97, 2)
     target = resistances[0]
 
     rr = round((target - entry) / (entry - stop), 2) if (entry - stop) else 0
 
-    # ===== DECISION =====
     if prob > 0.65 and rr > 1.5:
         decision = "🟢 صفقة قوية"
     elif prob > 0.5:
